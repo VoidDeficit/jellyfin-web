@@ -287,7 +287,7 @@ class PlaybackCore {
             const playTimeout = playAtTimeLocal - currentTime;
 
             // Seek only if delay is noticeable.
-            if ((currentPositionTicks - positionTicks) > this.minDelaySkipToSync * Helper.TicksPerMillisecond) {
+            if (Math.abs(currentPositionTicks - positionTicks) > this.minDelaySkipToSync * Helper.TicksPerMillisecond) {
                 this.localSeek(positionTicks);
             }
 

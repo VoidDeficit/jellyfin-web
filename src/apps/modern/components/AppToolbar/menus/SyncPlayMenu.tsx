@@ -1,5 +1,7 @@
 import { SyncPlayUserAccessType } from '@jellyfin/sdk/lib/generated-client/models/sync-play-user-access-type';
 import type { ApiClient } from 'jellyfin-apiclient';
+import Chat from '@mui/icons-material/Chat';
+import Edit from '@mui/icons-material/Edit';
 import GroupAdd from '@mui/icons-material/GroupAdd';
 import PersonAdd from '@mui/icons-material/PersonAdd';
 import PersonOff from '@mui/icons-material/PersonOff';
@@ -102,6 +104,20 @@ const SyncPlayMenu: FC<SyncPlayMenuProps> = ({
         onMenuClose();
     }, [ serverId, currentGroup, onMenuClose, syncPlay ]);
 
+    const onGroupChatClick = useCallback(async () => {
+        const chatPanel = (await import('../../../../../plugins/syncPlay/ui/chatPanel')).default;
+        chatPanel.open();
+        onMenuClose();
+    }, [ onMenuClose ]);
+
+    const onGroupRenameClick = useCallback(async () => {
+        if (!syncPlay) return;
+
+        onMenuClose();
+        const renameGroup = (await import('../../../../../plugins/syncPlay/ui/renameGroup')).default;
+        await renameGroup(syncPlay.Manager);
+    }, [ onMenuClose, syncPlay ]);
+
     const onStartGroupPlaybackClick = useCallback(() => {
         if (apiClient) {
             syncPlay?.Manager.resumeGroupPlayback(apiClient);
@@ -143,6 +159,30 @@ const SyncPlayMenu: FC<SyncPlayMenuProps> = ({
                 </MenuItem>
             );
         }
+
+        menuItems.push(
+            <MenuItem
+                key='sync-play-chat'
+                onClick={onGroupChatClick}
+            >
+                <ListItemIcon>
+                    <Chat />
+                </ListItemIcon>
+                <ListItemText primary={globalize.translate('LabelSyncPlayChat')} />
+            </MenuItem>
+        );
+
+        menuItems.push(
+            <MenuItem
+                key='sync-play-rename'
+                onClick={onGroupRenameClick}
+            >
+                <ListItemIcon>
+                    <Edit />
+                </ListItemIcon>
+                <ListItemText primary={globalize.translate('LabelSyncPlayRenameGroup')} />
+            </MenuItem>
+        );
 
         menuItems.push(
             <MenuItem

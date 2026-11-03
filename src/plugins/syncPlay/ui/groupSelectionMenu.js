@@ -2,6 +2,8 @@ import { PluginType } from 'constants/pluginType';
 import { ServerConnections } from 'lib/jellyfin-apiclient';
 
 import SyncPlaySettingsEditor from './settings/SettingsEditor';
+import chatPanel from './chatPanel';
+import renameGroup from './renameGroup';
 import loading from '../../../components/loading/loading';
 import toast from '../../../components/toast/toast';
 import actionsheet from '../../../components/actionSheet/actionSheet';
@@ -142,6 +144,22 @@ class GroupSelectionMenu {
         }
 
         menuItems.push({
+            name: globalize.translate('LabelSyncPlayChat'),
+            icon: 'chat',
+            id: 'chat',
+            selected: false,
+            secondaryText: globalize.translate('LabelSyncPlayChatDescription')
+        });
+
+        menuItems.push({
+            name: globalize.translate('LabelSyncPlayRenameGroup'),
+            icon: 'edit',
+            id: 'rename-group',
+            selected: false,
+            secondaryText: globalize.translate('LabelSyncPlayRenameGroupDescription')
+        });
+
+        menuItems.push({
             name: globalize.translate('Settings'),
             icon: 'video_settings',
             id: 'settings',
@@ -171,6 +189,10 @@ class GroupSelectionMenu {
                 this.SyncPlay?.Manager.resumeGroupPlayback(apiClient);
             } else if (id == 'halt-playback') {
                 this.SyncPlay?.Manager.haltGroupPlayback(apiClient);
+            } else if (id == 'chat') {
+                chatPanel.open();
+            } else if (id == 'rename-group') {
+                renameGroup(this.SyncPlay?.Manager);
             } else if (id == 'leave-group') {
                 apiClient.leaveSyncPlayGroup();
             } else if (id == 'settings') {

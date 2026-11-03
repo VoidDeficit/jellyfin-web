@@ -9,9 +9,9 @@ import Events from '../../../../utils/events.ts';
  * Time estimation.
  */
 const NumberOfTrackedMeasurements = 8;
-const PollingIntervalGreedy = 1000; // milliseconds
-const PollingIntervalLowProfile = 60000; // milliseconds
-const GreedyPingCount = 3;
+const PollingIntervalGreedy = 300; // milliseconds
+const PollingIntervalLowProfile = 20000; // milliseconds
+const GreedyPingCount = NumberOfTrackedMeasurements;
 
 /**
  * Class that stores measurement data.
@@ -92,6 +92,18 @@ class TimeSync {
     }
 
     /**
+     * Gets the ping to schedule group commands with. Commands have to arrive on time despite the
+     * jitter of the connection, which the best case measurement used for the offset does not show.
+     * @returns {number} The ping time.
+     */
+    getSchedulingPing() {
+        if (!this.measurements.length) return 0;
+
+        const pings = this.measurements.map((measurement) => measurement.getPing()).sort((a, b) => a - b);
+        return pings[Math.floor(pings.length * 0.75)];
+    }
+
+    /**
      * Updates time offset between remote entity and local entity.
      * @param {Measurement} measurement The new measurement.
      */
@@ -147,7 +159,7 @@ class TimeSync {
             this.pings++;
         }
 
-        Events.trigger(this, 'update', [null, this.getTimeOffset(), this.getPing()]);
+        Events.trigger(this, 'update', [null, this.getTimeOffset(), this.getSchedulingPing()]);
     }
 
     /**

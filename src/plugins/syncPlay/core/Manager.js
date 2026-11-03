@@ -12,6 +12,11 @@ import toast from '../../../components/toast/toast';
 import globalize from '../../../lib/globalize';
 import Events from '../../../utils/events.ts';
 
+const MaxChatMessages = 200;
+const MinPingChange = 20; // Smaller changes are not worth a request, in milliseconds.
+const ReconnectInterval = 3000; // milliseconds
+const RejoinDelay = 500; // Lets the server register the new connection, in milliseconds.
+
 /**
  * Class that manages the SyncPlay feature.
  */
@@ -40,6 +45,12 @@ class Manager {
 
         this.currentPlayer = null;
         this.playerWrapper = null;
+
+        this.chatMessages = [];
+        this.lastReportedPing = null;
+        this.connectionLost = false;
+        this.reconnectTimer = null;
+        this.boundApiClients = new WeakSet();
     }
 
     /**
@@ -61,7 +72,9 @@ class Manager {
 
         Events.on(this.timeSyncCore, 'time-sync-server-update', (event, timeOffset, ping) => {
             // Report ping back to server.
-            if (this.isSyncPlayEnabled()) {
+            if (this.isSyncPlayEnabled()
+                && (this.lastReportedPing === null || Math.abs(ping - this.lastReportedPing) >= MinPingChange)) {
+                this.lastReportedPing = ping;
                 this.getApiClient().sendSyncPlayPing({
                     Ping: ping
                 });
@@ -79,6 +92,136 @@ class Manager {
         }
 
         this.apiClient = apiClient;
+        this.bindConnectionEvents(apiClient);
+    }
+
+    /**
+     * Binds to the events of the WebSocket. The server removes a session from its group as soon as
+     * the WebSocket closes, which a reverse proxy can do at any moment (reloads, idle timeouts), and
+     * the client can't be told about it. Therefore it has to join the group again on its own.
+     * @param {Object} apiClient The ApiClient.
+     */
+    bindConnectionEvents(apiClient) {
+        if (this.boundApiClients.has(apiClient)) return;
+        this.boundApiClients.add(apiClient);
+
+        Events.on(apiClient, 'websocketclose', () => {
+            if (apiClient !== this.apiClient || !this.isSyncPlayEnabled()) return;
+
+            this.connectionLost = true;
+            this.clearReconnectTimer();
+            this.reconnectTimer = setInterval(() => apiClient.ensureWebSocket(), ReconnectInterval);
+        });
+
+        Events.on(apiClient, 'websocketopen', () => {
+            this.clearReconnectTimer();
+            if (apiClient !== this.apiClient || !this.connectionLost) return;
+
+            this.connectionLost = false;
+            setTimeout(() => this.rejoinGroup(apiClient), RejoinDelay);
+        });
+    }
+
+    clearReconnectTimer() {
+        clearInterval(this.reconnectTimer);
+        this.reconnectTimer = null;
+    }
+
+    /**
+     * Joins the current group again after the connection has been lost.
+     * @param {Object} apiClient The ApiClient.
+     */
+    rejoinGroup(apiClient) {
+        if (!this.isSyncPlayEnabled()) return;
+
+        this.timeSyncCore.onConnectionRestored();
+        this.lastReportedPing = null;
+
+        apiClient.joinSyncPlayGroup({
+            GroupId: this.groupInfo.GroupId
+        }).then(() => {
+            if (!this.isSyncPlayEnabled()) return;
+
+            // The group now waits for this client. The play queue did not change, so nothing is going
+            // to reload the player, which is what would make it report on its own.
+            if (!this.followingGroupPlayback) {
+                apiClient.requestSyncPlaySetIgnoreWait({
+                    IgnoreWait: true
+                });
+            } else if (this.isPlaybackActive()) {
+                this.playbackCore.sendBufferingRequest(this.playbackCore.isBuffering());
+            }
+        }).catch((error) => {
+            console.error('SyncPlay rejoinGroup: failed to join group again:', error);
+        });
+    }
+
+    /**
+     * Renames the current group.
+     * @param {string} groupName The new name.
+     * @returns {Promise} A Promise fulfilled upon request completion.
+     */
+    renameGroup(groupName) {
+        const apiClient = this.getApiClient();
+        return apiClient.ajax({
+            type: 'POST',
+            url: apiClient.getUrl('SyncPlay/Rename'),
+            data: JSON.stringify({ GroupName: groupName }),
+            contentType: 'application/json'
+        });
+    }
+
+    /**
+     * Sends a chat message to the current group.
+     * @param {string} text The message.
+     * @returns {Promise} A Promise fulfilled upon request completion.
+     */
+    sendChatMessage(text) {
+        const apiClient = this.getApiClient();
+        return apiClient.ajax({
+            type: 'POST',
+            url: apiClient.getUrl('SyncPlay/Chat'),
+            data: JSON.stringify({ Text: text }),
+            contentType: 'application/json'
+        });
+    }
+
+    /**
+     * Gets the known chat messages of the current group.
+     * @returns {Array} The messages, oldest first.
+     */
+    getChatMessages() {
+        return this.chatMessages;
+    }
+
+    /**
+     * Adds chat messages that are not known yet.
+     * @param {Array} messages The messages.
+     */
+    addChatMessages(messages) {
+        const newMessages = messages.filter((message) => !this.chatMessages.some(({ Id }) => Id === message.Id));
+        if (!newMessages.length) return;
+
+        this.chatMessages = [ ...this.chatMessages, ...newMessages ]
+            .sort((a, b) => new Date(a.SentAt) - new Date(b.SentAt))
+            .slice(-MaxChatMessages);
+        Events.trigger(this, 'chat-messages', [newMessages]);
+    }
+
+    /**
+     * Loads the messages sent before this client joined, or while it was disconnected.
+     * @param {Object} apiClient The ApiClient.
+     */
+    loadChatHistory(apiClient) {
+        apiClient.ajax({
+            type: 'GET',
+            url: apiClient.getUrl('SyncPlay/Chat'),
+            dataType: 'json'
+        }).then((messages) => {
+            if (this.isSyncPlayEnabled()) this.addChatMessages(messages);
+        }).catch((error) => {
+            console.error('SyncPlay loadChatHistory: failed to load messages:', error);
+        });
     }
 
     /**
@@ -212,7 +355,9 @@ class Manager {
             case 'GroupJoined':
                 cmd.Data.LastUpdatedAt = new Date(cmd.Data.LastUpdatedAt);
                 this.enableSyncPlay(apiClient, cmd.Data, true);
+                this.groupInfo = cmd.Data;
                 Events.trigger(this, 'group-update', [ cmd.Data ]);
+                this.loadChatHistory(apiClient);
                 break;
             case 'SyncPlayIsDisabled':
                 toast(globalize.translate('MessageSyncPlayIsDisabled'));
@@ -224,14 +369,25 @@ class Manager {
                 break;
             case 'GroupUpdate':
                 cmd.Data.LastUpdatedAt = new Date(cmd.Data.LastUpdatedAt);
+                if (this.groupInfo?.GroupName !== cmd.Data.GroupName) {
+                    toast(globalize.translate('MessageSyncPlayGroupRenamed', cmd.Data.GroupName));
+                }
                 this.groupInfo = cmd.Data;
                 Events.trigger(this, 'group-update', [ cmd.Data ]);
+                break;
+            case 'ChatMessage':
+                this.addChatMessages([cmd.Data]);
                 break;
             case 'StateUpdate':
                 Events.trigger(this, 'group-state-update', [cmd.Data.State, cmd.Data.Reason]);
                 break;
             case 'GroupDoesNotExist':
                 toast(globalize.translate('MessageSyncPlayGroupDoesNotExist'));
+                // The group ended while this client was trying to get back into it.
+                if (this.isSyncPlayEnabled()) {
+                    this.disableSyncPlay(true);
+                    Events.trigger(this, 'group-update', []);
+                }
                 break;
             case 'CreateGroupDenied':
                 toast(globalize.translate('MessageSyncPlayCreateGroupDenied'));
@@ -408,6 +564,11 @@ class Manager {
         this.followingGroupPlayback = true;
         this.lastPlaybackCommand = null;
         this.queuedCommand = null;
+        this.chatMessages = [];
+        this.lastReportedPing = null;
+        this.connectionLost = false;
+        this.clearReconnectTimer();
+        this.timeSyncCore.stop();
         this.playbackCore.syncEnabled = false;
         Events.trigger(this, 'enabled', [false]);
         this.playerWrapper.unbindFromPlayer();

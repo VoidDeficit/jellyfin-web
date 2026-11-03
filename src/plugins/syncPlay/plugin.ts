@@ -8,6 +8,7 @@ import SyncPlay from './core';
 import SyncPlayNoActivePlayer from './ui/players/NoActivePlayer';
 import SyncPlayHtmlVideoPlayer from './ui/players/HtmlVideoPlayer';
 import SyncPlayHtmlAudioPlayer from './ui/players/HtmlAudioPlayer';
+import chatPanel from './ui/chatPanel';
 
 class SyncPlayPlugin implements Plugin {
     name: string;
@@ -34,6 +35,8 @@ class SyncPlayPlugin implements Plugin {
         SyncPlay.PlayerFactory.setDefaultWrapper(SyncPlayNoActivePlayer);
         SyncPlay.PlayerFactory.registerWrapper(SyncPlayHtmlVideoPlayer);
         SyncPlay.PlayerFactory.registerWrapper(SyncPlayHtmlAudioPlayer);
+
+        chatPanel.bind(SyncPlay.Manager);
 
         // Listen for player changes.
         Events.on(playbackManager, 'playerchange', (_, newPlayer) => {

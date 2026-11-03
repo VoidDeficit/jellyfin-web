@@ -63,6 +63,20 @@ class TimeSyncCore {
     }
 
     /**
+     * Stops the time updates with server.
+     */
+    stop() {
+        this.timeSyncServer.stopPing();
+    }
+
+    /**
+     * Takes new measurements after the connection to the server has been restored.
+     */
+    onConnectionRestored() {
+        this.timeSyncServer.onConnectionRestored();
+    }
+
+    /**
      * Gets the display name of the selected device for time sync.
      * @returns {string} The display name.
      */
