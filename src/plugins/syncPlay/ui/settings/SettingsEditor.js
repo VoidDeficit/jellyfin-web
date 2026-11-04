@@ -133,7 +133,7 @@ class SettingsEditor {
         const useSkipToSync = context.querySelector('#chkSkipToSync').checked;
 
         setSetting('extraTimeOffset', extraTimeOffset);
-        setSetting('enableSyncCorrection', syncCorrection);
+        setSetting('syncCorrection', syncCorrection);
         setSetting('minDelaySpeedToSync', minDelaySpeedToSync);
         setSetting('maxDelaySpeedToSync', maxDelaySpeedToSync);
         setSetting('speedToSyncDuration', speedToSyncDuration);

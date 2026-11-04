@@ -48,7 +48,7 @@ class PlaybackCore {
      */
     loadPreferences() {
         // Minimum required delay for SpeedToSync to kick in, in milliseconds.
-        this.minDelaySpeedToSync = toFloat(getSetting('minDelaySpeedToSync'), 60.0);
+        this.minDelaySpeedToSync = toFloat(getSetting('minDelaySpeedToSync'), 100.0);
 
         // Maximum delay after which SkipToSync is used instead of SpeedToSync, in milliseconds.
         this.maxDelaySpeedToSync = toFloat(getSetting('maxDelaySpeedToSync'), 3000.0);
@@ -57,7 +57,7 @@ class PlaybackCore {
         this.speedToSyncDuration = toFloat(getSetting('speedToSyncDuration'), 1000.0);
 
         // Minimum required delay for SkipToSync to kick in, in milliseconds.
-        this.minDelaySkipToSync = toFloat(getSetting('minDelaySkipToSync'), 400.0);
+        this.minDelaySkipToSync = toFloat(getSetting('minDelaySkipToSync'), 100.0);
 
         // Whether SpeedToSync should be used.
         this.useSpeedToSync = toBoolean(getSetting('useSpeedToSync'), true);
@@ -66,7 +66,8 @@ class PlaybackCore {
         this.useSkipToSync = toBoolean(getSetting('useSkipToSync'), true);
 
         // Whether sync correction during playback is active.
-        this.enableSyncCorrection = toBoolean(getSetting('enableSyncCorrection'), false);
+        // Stored under a new name, as the old one holds the former default for anyone who saved the settings.
+        this.enableSyncCorrection = toBoolean(getSetting('syncCorrection'), true);
     }
 
     /**
@@ -201,6 +202,9 @@ class PlaybackCore {
                         // Check playback state only, as position ticks will be corrected by sync.
                         if (!isPlaying) {
                             this.scheduleUnpause(command.When, command.PositionTicks);
+                        } else {
+                            // An earlier command may have left the correction disabled.
+                            this.syncEnabled = true;
                         }
                         break;
                     case 'Pause':
@@ -287,7 +291,8 @@ class PlaybackCore {
             const playTimeout = playAtTimeLocal - currentTime;
 
             // Seek only if delay is noticeable.
-            if (Math.abs(currentPositionTicks - positionTicks) > this.minDelaySkipToSync * Helper.TicksPerMillisecond) {
+            // Not below 400 ms, as a seek right before the start delays this client more than it gains.
+            if (Math.abs(currentPositionTicks - positionTicks) > Math.max(this.minDelaySkipToSync, 400) * Helper.TicksPerMillisecond) {
                 this.localSeek(positionTicks);
             }
 
@@ -304,10 +309,15 @@ class PlaybackCore {
         } else {
             // Group playback already started.
             const serverPositionTicks = this.estimateCurrentTicks(positionTicks, playAtTime);
-            Helper.waitForEventOnce(this.manager, 'unpause').then(() => {
+            if (playerWrapper.isPlaying()) {
+                // No unpause event is going to fire for a player that is already playing.
                 this.localSeek(serverPositionTicks);
-            });
-            this.localUnpause();
+            } else {
+                Helper.waitForEventOnce(this.manager, 'unpause').then(() => {
+                    this.localSeek(this.estimateCurrentTicks(positionTicks, playAtTime));
+                });
+                this.localUnpause();
+            }
             setTimeout(() => {
                 Events.trigger(this.manager, 'notify-osd', ['unpause']);
             }, 100);
@@ -556,6 +566,12 @@ class PlaybackCore {
             // TODO: SpeedToSync is failing on Safari (Mojave); even if playbackRate is supported, some delay seems to exist.
             // TODO: both SpeedToSync and SpeedToSync seem to have a hard time keeping up on Android Chrome as well.
             if (playerWrapper.hasPlaybackRate() && this.useSpeedToSync && absDiffMillis >= this.minDelaySpeedToSync && absDiffMillis < this.maxDelaySpeedToSync) {
+                // Catch up over a longer time rather than at a speed the player can't buffer for.
+                const MaxSpeed = 2.0;
+                if (diffMillis >= speedToSyncTime * (MaxSpeed - 1.0)) {
+                    speedToSyncTime = diffMillis / (MaxSpeed - 1.0);
+                }
+
                 // Fix negative speed when client is ahead of time more than speedToSyncTime.
                 const MinSpeed = 0.2;
                 if (diffMillis <= -speedToSyncTime * MinSpeed) {
